@@ -1,0 +1,17 @@
+<?php
+/**
+ * @file
+ * Provides a RDF-based service class for the Search API.
+ */
+
+/**
+ * Implements hook_search_api_service_info().
+ */
+function rdf_indexer_search_api_service_info() {
+  $services['rdf_indexer_service'] = array(
+    'name' => t('RDF indexer service'),
+    'description' => t('<p>Index items using an RDF store server.</p>'),
+    'class' => 'RdfIndexerArc2StoreService',
+  );
+  return $services;
+}
