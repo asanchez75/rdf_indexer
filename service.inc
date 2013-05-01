@@ -71,6 +71,29 @@ class RdfIndexerArc2StoreService extends SearchApiAbstractService {
   }
 
   /**
+   * Notifies this server that it is about to be deleted from the database and
+   * should therefore clean up, if appropriate.
+   *
+   * Note that you shouldn't call the server's save() method, or any
+   * methods that might do that, from inside of this method as the server isn't
+   * present in the database anymore at this point.
+   *
+   * By default, deletes all indexes from this server.
+   */
+  public function preDelete() {
+    // Only react on real deletes, not on reverts.
+    // @see https://drupal.org/node/1414078
+    // This method could be removed once the above issue is fixed.
+    if ($this->server->hasStatus(ENTITY_IN_CODE)) {
+      return;
+    }
+    $indexes = search_api_index_load_multiple(FALSE, array('server' => $this->server->machine_name));
+    foreach ($indexes as $index) {
+      $this->removeIndex($index);
+    }
+  }
+
+  /**
    * Add a new index to this server.
    *
    * @param SearchApiIndex $index
