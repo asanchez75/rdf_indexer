@@ -160,13 +160,6 @@ class RdfIndexerArc2StoreService extends SearchApiAbstractService {
    * specified index, or all items from that index, or all items from all
    * indexes on this server.
    *
-   * This method has a custom, Solr-specific extension:
-   * If $ids is a string other than "all", it is treated as a Solr query. All
-   * items matching that Solr query are then deleted. If $index is additionally
-   * specified, then only those items also lying on that index will be deleted.
-   * It is up to the caller to ensure $ids is a valid query when the method is
-   * called in this fashion.
-   *
    * @param $ids
    *   Either an array containing the ids of the items that should be deleted,
    *   or 'all' if all items should be deleted. Other formats might be
@@ -180,9 +173,17 @@ class RdfIndexerArc2StoreService extends SearchApiAbstractService {
     $store = arc2_store_get_store($index->server()->options['store_id']);
 
     try {
-      // @todo support individual item deletion.
       // Emtpy the local store.
-      $store->reset();
+      if ($ids === 'all') {
+        $store->reset();
+      }
+      elseif (is_array($ids)) {
+        // Contructs the URI of the graph for each entity ID and deletes it.
+        foreach($ids as $id) {
+          $uri = rdfx_resource_uri($index->item_type, $id);
+          $store->delete('', $uri);
+        }
+      }
     }
     catch(Exception $e) {
       watchdog_exception('rdf_indexer', $e, '%type while deleting items from server @server: !message in %function (line %line of %file).', array('@server' => $this->server->name));
