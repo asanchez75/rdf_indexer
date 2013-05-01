@@ -154,37 +154,6 @@ class RdfIndexerArc2StoreService extends SearchApiAbstractService {
   }
 
   /**
-   * Returns an ARC2 resource composed of the merge of input resources.
-   */
-  public function getMergedResources(array $resources) {
-    $index = array();
-    $ns = array();
-    $collection = ARC2::getResource();
-
-    foreach ($resources as $resource) {
-      // Merge namespaces.
-      $ns = array_merge($ns, $resource->ns);
-      // Merge indexes.
-      foreach ($resource->index as $s => $ps) {
-        if (!isset($index[$s])) $index[$s] = array();
-        foreach ($ps as $p => $os) {
-          if (!isset($index[$s][$p])) $index[$s][$p] = array();
-          foreach ($os as $o) {
-            if (!in_array($o, $index[$s][$p])) {
-              $index[$s][$p][] = $o;
-            }
-          }
-        }
-      }
-    }
-
-    $collection->ns = $ns;
-    $collection->index = $index;
-
-    return $collection;
-  }
-
-  /**
    * Delete items from an index on this server.
    *
    * Might be either used to delete some items (given by their ids) from a
