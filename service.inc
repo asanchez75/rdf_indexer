@@ -180,7 +180,8 @@ class RdfIndexerArc2StoreService extends SearchApiAbstractService {
       elseif (is_array($ids)) {
         // Contructs the URI of the graph for each entity ID and deletes it.
         foreach($ids as $id) {
-          $uri = rdfx_resource_uri($index->item_type, $id);
+          $entity = entity_load_single($index->item_type, $id);
+          $uri = rdfx_resource_uri($index->item_type, $entity);
           $store->delete('', $uri);
         }
       }
