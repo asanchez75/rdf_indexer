@@ -6,3 +6,4 @@ core = 7.x
 package = RDF
 
 files[] = service.inc
+files[] = includes/callback_entity_public.inc

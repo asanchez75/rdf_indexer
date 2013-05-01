@@ -15,3 +15,16 @@ function rdf_indexer_search_api_service_info() {
   );
   return $services;
 }
+
+/**
+ * Implements hook_search_api_alter_callback_info().
+ */
+function rdf_indexer_search_api_alter_callback_info() {
+  $callbacks['rdf_indexer_alter_entity_public'] = array(
+    'name' => t('Public entities'),
+    'description' => t('Only index entities which are publicly accessible.'),
+    'class' => 'RdfIndexerAlterEntityPublic',
+  );
+
+  return $callbacks;
+}
