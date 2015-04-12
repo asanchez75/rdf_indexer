@@ -1,0 +1,850 @@
+diff --git a/rdf_indexer.info b/rdf_indexer.info
+index a904e7f..0495c4b 100644
+--- a/rdf_indexer.info
++++ b/rdf_indexer.info
+@@ -8,3 +8,7 @@ package = RDF
+ 
+ files[] = service.inc
+ files[] = includes/callback_entity_public.inc
++files[] = service.arc2.inc
++files[] = service.virtuoso.inc
++
++configure = admin/config/search/search_api
+diff --git a/rdf_indexer.module b/rdf_indexer.module
+index b3ed750..f492b85 100644
+--- a/rdf_indexer.module
++++ b/rdf_indexer.module
+@@ -13,6 +13,11 @@ function rdf_indexer_search_api_service_info() {
+     'description' => t('<p>Index items using an RDF store server.</p>'),
+     'class' => 'RdfIndexerArc2StoreService',
+   );
++  $services['rdf_virtuoso_service'] = array(
++    'name' => t('RDF indexer service for Virtuoso'),
++    'description' => t('<p>Index items using the Virtuoso triplestore.</p>'),
++    'class' => 'RdfIndexerVirtuosoService',
++  );
+   return $services;
+ }
+ 
+diff --git a/service.arc2.inc b/service.arc2.inc
+new file mode 100644
+index 0000000..d6e5783
+--- /dev/null
++++ b/service.arc2.inc
+@@ -0,0 +1,115 @@
++<?php
++
++/**
++ * Search service class using an RDF store server.
++ */
++class RdfIndexerArc2StoreService extends RdfIndexerBaseService {
++
++  /*
++   * Loads ARC2 store this index is connected to.
++   */
++  public function getStore(SearchApiIndex $index) {
++    return arc2_store_get_store($index->server()->options['store_id']);
++  }
++
++  /**
++   * Form callback. Might be called on an uninitialized object - in this case,
++   * the form is for configuring a newly created server.
++   *
++   * Returns an empty form by default.
++   *
++   * @return array
++   *   A form array for setting service-specific options.
++   */
++  public function configurationForm(array $form, array &$form_state) {
++    ctools_include('export');
++    if (module_exists('arc2_store')) {
++      foreach (ctools_export_crud_load_all('arc2_store_settings') as $store) {
++        if (empty($store->disabled)) {
++          $options[$store->store_id] = $store->label . ' (' . $store->store_id . ')';
++        }
++      }
++    }
++
++    if (empty($options)) {
++      $form['store_id'] = array(
++        '#markup' => t('No ARC2 store found. Please install the ARC2 store module and create some stores.'),
++      );
++    }
++    else {
++      $form['store_id'] = array(
++        '#type' => 'select',
++        '#title' => t('ARC2 store'),
++        '#description' => t('The ARC2 store where the data should be indexed.'),
++        '#options' => $options,
++        '#default_value' => $this->options['store_id'],
++        '#required' => TRUE,
++      );
++    }
++    return $form;
++  }
++
++  /**
++   * View this server's settings. Output can be HTML or a render array, a <dl>
++   * listing all relevant settings is preferred.
++   *
++   * The default implementation does a crude output as a definition list, with
++   * option names taken from the configuration form.
++   */
++  public function viewSettings() {
++    $output = '';
++    $store = arc2_store_settings_load($this->options['store_id']);
++    if (!empty($store->settings['endpoint_enabled'])) {
++      $url = url($store->settings['endpoint_path'], array('absolute' => TRUE));
++      $output .= "<dl>\n  <dt>";
++      $output .= t('SPARQL endpoint');
++      $output .= "</dt>\n  <dd>";
++      $output .= l($url, $url);
++      $output .= '</dd>';
++      $output .= "\n</dl>";
++    }
++
++    return $output;
++  }
++  
++  /*
++   * Index an item to the given store
++   *
++   * @param $item
++   *   The rdfx_get_rdf_model() resource
++   * @param $store
++   *   The ARC2 Store
++   * @param $graph
++   *   The optional graph URI to update (unused for ARC2)
++   */
++  public function indexItem($item, $store, $graph = FALSE) {
++    $store->insert($item->index, $item->uri);
++  }
++  
++  /*
++   * Delete an item from the given store
++   *
++   * @param $item
++   *   The rdfx_get_rdf_model() resource
++   * @param $store
++   *   The ARC2 Store
++   * @param $graph
++   *   The optional graph URI to update (unused for ARC2)
++   */
++  public function deleteItem($item, $store, $graph = FALSE) {
++    $store->delete('', $item);
++  }
++  
++  /*
++   * Clear the ARC2 store
++   *
++   * @param $store
++   *   The ARC2 Store
++   * @param $graph
++   *   The optional graph URI to update (unused for ARC2)
++   */
++  public function clearGraph($store, $graph = FALSE) {
++    $store->reset();
++  }
++  
++}
+\ No newline at end of file
+diff --git a/service.inc b/service.inc
+index f0d5b21..3472054 100644
+--- a/service.inc
++++ b/service.inc
+@@ -3,128 +3,31 @@
+ /**
+  * Search service class using an RDF store server.
+  */
+-class RdfIndexerArc2StoreService extends SearchApiAbstractService {
++class RdfIndexerBaseService extends SearchApiAbstractService {
+ 
+   public function __construct(SearchApiServer $server) {
+     parent::__construct($server);
+   }
+-
+-  /**
+-   * Form callback. Might be called on an uninitialized object - in this case,
+-   * the form is for configuring a newly created server.
+-   *
+-   * Returns an empty form by default.
+-   *
+-   * @return array
+-   *   A form array for setting service-specific options.
++  
++  /*
++   * Return a representation of the triplestore
+    */
+-  public function configurationForm(array $form, array &$form_state) {
+-    ctools_include('export');
+-    if (module_exists('arc2_store')) {
+-      foreach (ctools_export_crud_load_all('arc2_store_settings') as $store) {
+-        if (empty($store->disabled)) {
+-          $options[$store->store_id] = $store->label . ' (' . $store->store_id . ')';
+-        }
+-      }
+-    }
+-
+-    if (empty($options)) {
+-      $form['store_id'] = array(
+-        '#markup' => t('No ARC2 store found. Please install the ARC2 store module and create some stores.'),
+-      );
+-    }
+-    else {
+-      $form['store_id'] = array(
+-        '#type' => 'select',
+-        '#title' => t('ARC2 store'),
+-        '#description' => t('The ARC2 store where the data should be indexed.'),
+-        '#options' => $options,
+-        '#default_value' => $this->options['store_id'],
+-        '#required' => TRUE,
+-      );
+-    }
+-
+-    return $form;
++  public function getStore(SearchApiIndex $index) {
++    return FALSE;
+   }
+-
+-  /**
+-   * View this server's settings. Output can be HTML or a render array, a <dl>
+-   * listing all relevant settings is preferred.
+-   *
+-   * The default implementation does a crude output as a definition list, with
+-   * option names taken from the configuration form.
++  /*
++   * Index an item to the given store
+    */
+-  public function viewSettings() {
+-    $output = '';
+-    $store = arc2_store_settings_load($this->options['store_id']);
+-    if (!empty($store->settings['endpoint_enabled'])) {
+-      $url = url($store->settings['endpoint_path'], array('absolute' => TRUE));
+-      $output .= "<dl>\n  <dt>";
+-      $output .= t('SPARQL endpoint');
+-      $output .= "</dt>\n  <dd>";
+-      $output .= l($url, $url);
+-      $output .= '</dd>';
+-      $output .= "\n</dl>";
+-    }
+-
+-    return $output;
+-  }
+-
+-  /**
+-   * Notifies this server that it is about to be deleted from the database and
+-   * should therefore clean up, if appropriate.
+-   *
+-   * Note that you shouldn't call the server's save() method, or any
+-   * methods that might do that, from inside of this method as the server isn't
+-   * present in the database anymore at this point.
+-   *
+-   * By default, deletes all indexes from this server.
++  public function indexItem($item, $store, $graph = FALSE) {}
++  /*
++   * Delete an item from the given store
+    */
+-  public function preDelete() {
+-    // Only react on real deletes, not on reverts.
+-    // @see https://drupal.org/node/1414078
+-    // This method could be removed once the above issue is fixed.
+-    if ($this->server->hasStatus(ENTITY_IN_CODE)) {
+-      return;
+-    }
+-    $indexes = search_api_index_load_multiple(FALSE, array('server' => $this->server->machine_name));
+-    foreach ($indexes as $index) {
+-      $this->removeIndex($index);
+-    }
+-  }
+-
+-  /**
+-   * Add a new index to this server.
+-   *
+-   * @param SearchApiIndex $index
+-   *   The index to add.
++  public function deleteItem($item, $store, $graph = FALSE) {}
++  /*
++   * Clear a graph from the given store
+    */
+-  public function addIndex(SearchApiIndex $index) {
+-    if (module_exists('search_api_multi') && module_exists('search_api_views')) {
+-      views_invalidate_cache();
+-    }
+-  }
+-
+-  /**
+-   * Notify the server that the indexed field settings for the index have
+-   * changed.
+-   * If any user action is necessary as a result of this, the method should
+-   * use drupal_set_message() to notify the user.
+-   *
+-   * @param SearchApiIndex $index
+-   *   The updated index.
+-   *
+-   * @return
+-   *   TRUE, if this change affected the server in any way that forces it to
+-   *   re-index the content. FALSE otherwise.
+-   */
+-  public function fieldsUpdated(SearchApiIndex $index) {
+-    if (module_exists('search_api_multi') && module_exists('search_api_views')) {
+-      views_invalidate_cache();
+-    }
+-    return TRUE;
+-  }
+-
++  public function clearGraph($store, $graph = FALSE) {}
++  
+   /**
+    * Index the specified items.
+    *
+@@ -155,8 +58,8 @@ class RdfIndexerArc2StoreService extends SearchApiAbstractService {
+    *   If indexing was prevented by a fundamental configuration error.
+    */
+   public function indexItems(SearchApiIndex $index, array $items) {
+-    // Loads ARC2 store this index is connected to.
+-    $store = arc2_store_get_store($index->server()->options['store_id']);
++    
++    $store = $this->getStore($index);
+ 
+     // @todo use documents and merge them before sending to ARC2.
+     // $documents = array();
+@@ -166,7 +69,7 @@ class RdfIndexerArc2StoreService extends SearchApiAbstractService {
+       try {
+         // Builds an RDF resource for the entity.
+         $rdf = rdfx_get_rdf_model($index->item_type, $id);
+-        $store->insert($rdf->index, $rdf->uri);
++        $this->indexItem($rdf, $store);
+         $ret[] = $id;
+       }
+       catch (Exception $e) {
+@@ -175,7 +78,7 @@ class RdfIndexerArc2StoreService extends SearchApiAbstractService {
+     }
+     return $ret;
+   }
+-
++  
+   /**
+    * Delete items from an index on this server.
+    *
+@@ -192,30 +95,91 @@ class RdfIndexerArc2StoreService extends SearchApiAbstractService {
+    *   this server should be cleared (then, $ids has to be 'all').
+    */
+   public function deleteItems($ids = 'all', SearchApiIndex $index = NULL) {
+-    // Loads ARC2 store this index is connected to.
+-    $store = arc2_store_get_store($index->server()->options['store_id']);
+-
++  
++    $store = $this->getStore($index);
+     try {
+       // Emtpy the local store.
+       if ($ids === 'all') {
+-        $store->reset();
++        
++        //this clears the graph for a given store, but there may be more than one index storing data at the graph
++        //$this->clearGraph($store);
++        $ids = array_keys(entity_load($index->item_type));
+       }
+-      elseif (is_array($ids)) {
++      if (is_array($ids)) {
+         // Contructs the URI of the graph for each entity ID and deletes it.
+-        foreach($ids as $id) {
+-          $entity = entity_load_single($index->item_type, $id);
+-          $uri = rdfx_resource_uri($index->item_type, $entity);
+-          $store->delete('', $uri);
++        foreach ($ids as $id) {
++          $rdf = rdfx_get_rdf_model($index->item_type, $id);
++          //in case there are more than one index
++          foreach($rdf->index as $subject => $triples){
++            $this->deleteItem($subject, $store);
++          }
+         }
++      } else {
++        throw new Exception('Could not delete the items specified because they were not in the form of an array');
+       }
+     }
+-    catch(Exception $e) {
++    catch (Exception $e) {
+       watchdog_exception('rdf_indexer', $e, '%type while deleting items from server @server: !message in %function (line %line of %file).', array('@server' => $this->server->name));
+     }
+   }
+ 
++  
++  /**
++   * Notifies this server that it is about to be deleted from the database and
++   * should therefore clean up, if appropriate.
++   *
++   * Note that you shouldn't call the server's save() method, or any
++   * methods that might do that, from inside of this method as the server isn't
++   * present in the database anymore at this point.
++   *
++   * By default, deletes all indexes from this server.
++   */
++  public function preDelete() {
++    // Only react on real deletes, not on reverts.
++    // @see https://drupal.org/node/1414078
++    // This method could be removed once the above issue is fixed.
++    if ($this->server->hasStatus(ENTITY_IN_CODE)) {
++      return;
++    }
++    $indexes = search_api_index_load_multiple(FALSE, array('server' => $this->server->machine_name));
++    foreach ($indexes as $index) {
++      $this->removeIndex($index);
++    }
++  }
++  
++  /**
++   * Add a new index to this server.
++   *
++   * @param SearchApiIndex $index
++   *   The index to add.
++   */
++  public function addIndex(SearchApiIndex $index) {
++    if (module_exists('search_api_multi') && module_exists('search_api_views')) {
++      views_invalidate_cache();
++    }
++  }
++  
++  /**
++   * Notify the server that the indexed field settings for the index have
++   * changed.
++   * If any user action is necessary as a result of this, the method should
++   * use drupal_set_message() to notify the user.
++   *
++   * @param SearchApiIndex $index
++   *   The updated index.
++   *
++   * @return
++   *   TRUE, if this change affected the server in any way that forces it to
++   *   re-index the content. FALSE otherwise.
++   */
++  public function fieldsUpdated(SearchApiIndex $index) {
++    if (module_exists('search_api_multi') && module_exists('search_api_views')) {
++      views_invalidate_cache();
++    }
++    return TRUE;
++  }
++  
+   public function search(SearchApiQueryInterface $query) {
+     throw new SearchApiException(t('The RDF indexer service does not support search. Please query the SPARQL endpoint directly if the RDF store provide such service.'));
+   }
+-
+-}
++}
+\ No newline at end of file
+diff --git a/service.virtuoso.inc b/service.virtuoso.inc
+new file mode 100644
+index 0000000..565244d
+--- /dev/null
++++ b/service.virtuoso.inc
+@@ -0,0 +1,411 @@
++<?php
++
++/**
++ * Search service class using an RDF store server.
++ */
++class RdfIndexerVirtuosoService extends RdfIndexerBaseService {
++  
++  /*
++   * The external store
++   */
++  public function getStore(SearchApiIndex $index) {
++    return $this->options;
++  }
++  
++  public function getTriplestoreUrl() {
++    if ( !isset($this->options['url']) ) {
++      watchdog('rdf_indexer', "The URL of the Virtuoso Server has not been specified.", WATCHDOG_WARNING);
++    }
++    
++    return $this->options['url'];
++  }
++  
++  public function getRequestHeaders() {
++    $headers = array(
++      'Content-Type' => 'application/x-www-form-urlencoded',
++    );
++    if ( !empty($this->options['authorization']) ) {
++      $headers['Authorization'] = $this->options['authorization'];
++    }
++    return $headers;
++  }
++
++  /**
++   * Form callback. Might be called on an uninitialized object - in this case,
++   * the form is for configuring a newly created server.
++   *
++   * Returns an empty form by default.
++   *
++   * @return array
++   *   A form array for setting service-specific options.
++   */
++  public function configurationForm(array $form, array &$form_state) {
++    global $base_url;
++    
++    $settings = isset($this->options) ? $this->options : array();
++    $form['url'] = array(
++      '#type' => 'textfield',
++      '#title' => t('Virtuoso SPARQL Endpoint URL'),
++      '#description' => t('The Virtuoso SPARQL Endpoint URL where data will be inserted and deleted via basic authentication. Typically, http://example.com:8890/sparql-auth'),
++      '#default_value' => isset($settings['url']) ? $settings['url'] : '',
++      '#required' => TRUE,
++    );
++    $form['graph'] = array(
++      '#type' => 'textfield',
++      '#title' => t('Graph URI'),
++      '#description' => t('The URI of the graph where data will be inserted and deleted.'),
++      '#default_value' => isset($settings['graph']) ? $settings['graph'] : $base_url,
++      '#required' => TRUE,
++    );
++    $form['test_query'] = array(
++      '#type' => 'textfield',
++      '#title' => t('Test SPARQL Query'),
++      '#description' => t('A test query that can be used to verify a connection can be established.'),
++      '#default_value' => isset($settings['test_query']) ? $settings['test_query'] : 'SELECT ?s WHERE {?s ?p ?o} LIMIT 1',
++      '#required' => TRUE,
++    );
++    $form['query_params'] = array(
++      '#type' => 'textfield',
++      '#title' => t('Additional Query Parameters'),
++      '#description' => t('Specify other query parameters that should be added to SPARQL Update requests.'),
++      '#default_value' => isset($settings['query_params']) ? $settings['query_params'] : 'default-graph-uri=&format=text%2Fhtml&timeout=0&debug=on',
++    );
++    $form['username'] = array(
++      '#type' => 'textfield',
++      '#title' => t('Username'),
++      '#description' => t('The username of the Virtuoso account with SPARQL/Update privileges'),
++      '#default_value' => isset($settings['username']) ? $settings['username'] : '',
++      '#required' => TRUE,
++    );   
++    //assume that 'Administer Search API' permission is valid enough to view the password 
++    $form['credential'] = array(
++      '#type' => 'textfield',
++      '#title' => t('Credential'),
++      '#description' => t('The credential of the Virtuoso account with SPARQL/Update privileges'),
++      '#default_value' => isset($settings['credential']) ? $settings['credential'] : '',
++      '#required' => TRUE,
++    ); 
++    $form['authorization'] = array(
++      '#type' => 'hidden',
++      '#value' => isset($settings['authorization']) ? $settings['authorization'] : '',
++    );    
++    return $form;
++  }
++
++  /**
++   * View this server's settings. Output can be HTML or a render array, a <dl>
++   * listing all relevant settings is preferred.
++   *
++   * The default implementation does a crude output as a definition list, with
++   * option names taken from the configuration form.
++   */
++  public function viewSettings() {
++    $settings = isset($this->options) ? $this->options : array();
++    if ( !empty($settings) ) {
++      require './includes/password.inc';
++      $output = "<dl>\n  <dt>";
++      $output .= t('Virtuoso SPARQL endpoint');
++      $output .= "</dt>\n  <dd>";
++      $output .= l($settings['url'], $settings['url']);
++      $output .= "</dd>\n  <dt>";
++      $output .= t('Graph URI');
++      $output .= "</dt>\n<dd>";
++      $output .= $settings['graph'];
++      $output .= "</dd>\n  <dt>";
++      $output .= t('Test Query');
++      $output .= "</dt>\n<dd>";
++      $output .= $settings['test_query'];
++      $output .= "</dd>\n  <dt>";
++      $output .= t('Additional Query Parameters');
++      $output .= "</dt>\n<dd>";
++      $output .= $settings['query_params'];
++      $output .= "</dd>\n  <dt>";
++      $output .= t('Username');
++      $output .= "</dt>\n  <dd>";
++      $output .= $settings['username'];
++      $output .= "</dd>\n  <dt>";
++      $output .= t('Credential');
++      $output .= "</dt>\n <dd>";
++      $output .= user_hash_password($settings['credential']);
++      $output .= "</dd>\n</dl>";
++      return $output;
++    } 
++    else {
++      return 'Virtuoso has not been configured.';
++    }
++  }
++  
++  /*
++   * Index an item to the given store
++   *
++   * @param $item
++   *   The rdfx_get_rdf_model() resource
++   * @param $store
++   *   The Virtuoso Store options from the SearchApiServer
++   * @param $graph
++   *   The optional graph URI to update
++   * @param $options
++   *    Array provided to expansion of the function
++   *    Currently, it supports returning the query string
++   */
++  public function indexItem($item, $store, $graph = FALSE, $options = array()) {
++    $graph = $graph ? $graph : $store['graph'];
++    $beginning = 'INSERT DATA INTO GRAPH <' . $graph . '> { ';
++    $end = ' } ';
++    $query = '';
++    $queries = array();
++    $triple_count = 0;
++    foreach($item->index as $subject => $triples){
++      //clear out the item in case it already exists 
++      $this->deleteItem($subject, $store, $graph, array('no_log' => TRUE));
++      
++      if( function_exists('drush_log') ){
++        drush_log('Re-indexing ' . $subject, 'ok');
++      }
++      
++      foreach($triples as $predicate => $value){
++        foreach($value as $triple){
++          $object = '';
++          if( isset($triple['type']) && $triple['type'] == 'uri' ){
++            $object .= '<'.$triple['value'].'>';
++          } else {
++            if( !empty($triple['datatype']) ){
++              $object .= '"'.$this->prepareString($triple['value']).'"^^'.$triple['datatype'];
++            } else if( isset($triple['lang']) && !empty($triple['lang']) ){
++              $object .= '"'.$this->prepareString($triple['value']).'"@'.$triple['lang'];
++            } else {
++              $object .= '"'.$this->prepareString($triple['value']).'"';
++            }
++          }
++          $query .= ' <'.$subject.'> <'.$predicate.'> '.$object.' . ';
++          $triple_count += 1;
++          //this is to avoid  ERROR:
++          //Virtuoso 37000 Error SP031: SPARQL: Internal error: The length of generated SQL text has exceeded 10000 lines of code
++          if( $triple_count == 500 ){
++            $queries[] = $beginning . $query . $end;
++            $triple_count = 0;
++            $query = '';
++          }
++        }
++      }
++    }
++    if( strlen($query) > 0 ){
++      $queries[] = $beginning . $query . $end;
++    }
++
++    if( isset($options['display']) ){
++      $query = '';
++      foreach($queries as $q){
++        $query .= $q;
++      }
++      return htmlspecialchars($query);
++    } else {
++      $result = '';
++      foreach($queries as $query){
++        $response = $this->executeQuery($query);
++        if( $response ){ $result .= $response; }
++        else if( function_exists('drush_log') ){
++          drush_log($query, 'error');
++        }
++      }
++      return $result;
++    }
++  }
++  
++  /**
++   * Delete the given URI from the triplestore
++   * 
++   * @param $item
++   *   The rdfx_get_rdf_model() resource
++   * @param $store
++   *   The Virtuoso Store options from the SearchApiServer
++   * @param $graph
++   *   The optional graph URI to update
++   * @param $options
++   *    Array provided to expansion of the function
++   *    Currently, it supports returning the query string
++   */
++  public function deleteItem($item, $store, $graph = FALSE, array $options = array()) {
++    $graph = $graph ? $graph : $store['graph'];
++    $query = 'WITH <' . $graph . '> DELETE { ?s ?p ?o } WHERE { ?s ?p ?o FILTER (?s = <' . $item . '>)}';
++    
++    if( !isset($options['no_log']) && function_exists('drush_log') ){
++      drush_log('Removing ' . $item, 'ok');
++    }
++      
++    if ( isset($options['display']) ) {
++      return htmlspecialchars($query);
++    } 
++    else {
++      return $this->executeQuery($query);
++    }
++  }
++  
++  /*
++   * Clear the Virtuoso store of all values from this index
++   * *** NEEDS UPDATING TO GET ALL ENTITIES FOR THIS INDEX
++   *     AND REMOVE ONLY THOSE ***
++   *
++   * @param $store
++   *   The Virtuoso Store options from the SearchApiServer
++   * @param $graph
++   *   The optional graph URI to update
++   * @param $options
++   *    Array provided to expansion of the function
++   *    Currently, it supports returning the query string
++   */
++  public function clearGraph($store, $graph = FALSE) {
++    $graph = $graph ? $graph : $store['graph'];
++    $query = 'CLEAR GRAPH <' . $graph . '>';
++    if ( isset($options['display']) ) {
++      return htmlspecialchars($query);
++    } 
++    else {
++      return $this->executeQuery($query);
++    }
++  }
++    
++  /*
++   * Connect to the triplestore and run a query
++   *
++   * Virtuoso at the /sparql-auth URL implements Digest Authentication
++   */
++  protected function executeQuery($query) {
++    $url = $this->getTriplestoreUrl();
++    $config = $this->options;
++ 
++    $data = 'query=' . urlencode($query);
++    if( !empty($config['query_params']) ){
++      $data .= '&' . $config['query_params'];
++    } 
++    $content = array(
++      'method' => 'POST',
++      'headers' => $this->getRequestHeaders(),
++      'data' => $data,
++    ); 
++    $response = drupal_http_request($url, $content);
++    if( $response->code == 200 ) {
++      return $response->data;
++    }
++    
++    //Unauthorized
++    elseif ( $response->code == 401 ) {
++    
++      $uri = parse_url($this->getTriplestoreUrl());
++      $this->authenticate($response->headers['www-authenticate'], $uri['path']);
++      //the authenticate method above will have added the new auth headers 
++      $content['headers'] = $this->getRequestHeaders(); 
++      $response = drupal_http_request($url, $content);
++      if ( $response->code == 200 ) {
++        watchdog('rdf_indexer', "@data.", array('@data' => $response->data), WATCHDOG_INFO);
++        return $response->data;
++      } 
++      else {
++        watchdog('rdf_indexer', "Could not authenticate with the triplestore while trying to run query: @query", array('@query' => $query), WATCHDOG_ERROR);
++      }
++    } 
++    else {
++      watchdog('rdf_indexer', "Unknown error[HTTP=@code] occured while trying to run the query: @query", array('@code' => $response->code, '@query' => $query), WATCHDOG_ERROR);
++    }
++    return FALSE;
++  }
++  
++  /*
++   * Build the Authorization header for Virtuoso
++   *
++   * @param $digest
++   *    The digest information passed from Virtuoso via the WWW-Authenticate header
++   * @param $uri
++   *    The uri path at which the original request was made
++   */
++  protected function authenticate($data, $uri) {
++    $value = explode(' ', $data, 2);
++    $type = $value[0];
++    
++    switch ($type) {
++    
++      case 'Digest':{
++        $digest = array();
++        $parts = explode(", ", $value[1]);
++        foreach ($parts as $element) {
++          $bits = explode("=", $element);
++          $digest[$bits[0]] = str_replace('"', '', $bits[1]);
++        }
++    
++        if ( $digest['qop'] == 'auth') {
++          $cnonce = time();
++          $ncvalue = '00000001';
++          $noncebit = $digest['nonce'] . ':' . $ncvalue . ':' . $cnonce . ':auth:' . md5("POST:" . $uri);
++          $A = md5($this->server->options['username'] . ':' . $digest['realm'] . ':' . $this->server->options['credential']);
++          $respdig = md5("$A:$noncebit");
++          $auth_header = 'Digest username="' . $this->server->options['username'] . '", realm="' . $digest['realm'];
++          $auth_header .= '", nonce="' . $digest['nonce'] . '", uri="' . $uri . '", algorithm=' . $digest['algorithm'];
++          $auth_header .= ', response="' . $respdig . '", opaque="' . $digest['opaque'] . '", qop=' . $digest['qop'];
++          $auth_header .= ', nc=' . $ncvalue . ', cnonce="' . $cnonce . '"';
++      
++          //update the authorization info
++          $config = $this->options;
++          $config['authorization'] = $auth_header;
++          $this->server->options = $config;
++          $this->server->save();
++      
++        } 
++        else {
++          watchdog('rdf_indexer', "Could not authenticate with the triplestore at URI: @uri because the Digest qop != 'auth'. It was '@qop'", array('@uri' => $uri, '@qop' => $digest['qop'] ), WATCHDOG_ERROR);
++        }
++        break;
++      } //end of 'Digest'
++    } //end of switch
++  }
++  
++  /*
++   * Clean up literal string values for processing
++   */
++  protected function prepareString($object = FALSE) {
++    if ( !empty($object) ) {
++      //strip out control characters
++      if ( !ctype_print($object) ) {
++        $object = preg_replace('/[\x00-\x1F\x80-\xFF]/', '', $object);
++      }
++      //escape backslash
++      $object = str_replace( "\\", "\\\\", $object );
++      //escape double quotes
++      $object = str_replace( "\"", "\\\"", $object );
++    }
++    return $object;
++  }
++
++  /*
++   * Set a drupal message with the insert/delete queries 
++   * or the response data for a given entity type and entity ID
++   *
++   * @param $entity_type
++   *    The type of entity to test
++   *
++   * @param $id
++   *    The entity ID
++   *
++   * @param $display
++   *    A boolean flag that if TRUE just displays the queries. 
++   *    If FALSE, the queries are executed and the response data 
++   *    is displayed instead
++   *
++   *  @param $toggle
++   *    A string where 'insert' runs just the insert routine,
++   *    'delete' runs just the delete routine, and
++   *    'both' runs both insert and delete routines
++   */
++  public function testQueries($entity_type, $id, $display = TRUE, $toggle = 'both') {
++    $options = $display ? array('display' => $display) : array();
++    $rdf= rdfx_get_rdf_model($entity_type, $id);
++    
++    $messages = array();
++    if ( $toggle == 'both' || $toggle == 'insert') {
++      $messages['insert'] = $this->indexItem($rdf, $this->options, FALSE, $options);
++    }
++    if ( $toggle == 'both' || $toggle == 'delete') {
++      $messages['delete'] = $this->deleteItem($rdf->uri, $this->options, FALSE, $options);
++    }
++    return $messages;
++  }
++}

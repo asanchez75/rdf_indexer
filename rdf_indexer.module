@@ -13,6 +13,11 @@ function rdf_indexer_search_api_service_info() {
     'description' => t('<p>Index items using an RDF store server.</p>'),
     'class' => 'RdfIndexerArc2StoreService',
   );
+  $services['rdf_virtuoso_service'] = array(
+    'name' => t('RDF indexer service for Virtuoso'),
+    'description' => t('<p>Index items using the Virtuoso triplestore.</p>'),
+    'class' => 'RdfIndexerVirtuosoService',
+  );
   return $services;
 }
 

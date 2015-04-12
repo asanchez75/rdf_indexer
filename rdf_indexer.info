@@ -8,3 +8,7 @@ package = RDF
 
 files[] = service.inc
 files[] = includes/callback_entity_public.inc
+files[] = service.arc2.inc
+files[] = service.virtuoso.inc
+
+configure = admin/config/search/search_api
