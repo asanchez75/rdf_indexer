@@ -165,27 +165,33 @@ class RdfIndexerVirtuosoService extends RdfIndexerBaseService {
       
       foreach($triples as $predicate => $value){
         foreach($value as $triple){
-          $object = '';
-          if( isset($triple['type']) && $triple['type'] == 'uri' ){
-            $object .= '<'.$triple['value'].'>';
-          } else {
-            if( !empty($triple['datatype']) ){
-              $object .= '"'.$this->prepareString($triple['value']).'"^^'.$triple['datatype'];
-            } else if( isset($triple['lang']) && !empty($triple['lang']) ){
-              $object .= '"'.$this->prepareString($triple['value']).'"@'.$triple['lang'];
+          if (is_string($triple['value'])) {
+            $object = '';
+            if( isset($triple['type']) && $triple['type'] == 'uri' ){
+              $object .= '<'.$triple['value'].'>';
             } else {
-              $object .= '"'.$this->prepareString($triple['value']).'"';
+              if( !empty($triple['datatype']) ){
+                $object .= '"'.$this->prepareString($triple['value']).'"^^'.$triple['datatype'];
+              } else if( isset($triple['lang']) && !empty($triple['lang']) ){
+                $object .= '"'.$this->prepareString($triple['value']).'"@'.$triple['lang'];
+              } else {
+                $object .= '"'.$this->prepareString($triple['value']).'"';
+              }
+            }
+            $query .= ' <'.$subject.'> <'.$predicate.'> '.$object.' . ';
+            $triple_count += 1;
+            //this is to avoid  ERROR:
+            //Virtuoso 37000 Error SP031: SPARQL: Internal error: The length of generated SQL text has exceeded 10000 lines of code
+            if( $triple_count == 500 ){
+              $queries[] = $beginning . $query . $end;
+              $triple_count = 0;
+              $query = '';
             }
           }
-          $query .= ' <'.$subject.'> <'.$predicate.'> '.$object.' . ';
-          $triple_count += 1;
-          //this is to avoid  ERROR:
-          //Virtuoso 37000 Error SP031: SPARQL: Internal error: The length of generated SQL text has exceeded 10000 lines of code
-          if( $triple_count == 500 ){
-            $queries[] = $beginning . $query . $end;
-            $triple_count = 0;
-            $query = '';
+          else {
+            watchdog('rdf_indexer', 'See uri = %uri . It can not convert %value into a string.  ', array('%uri' => $item->uri, '%value' => var_export($triple['value'], 1)));
           }
+
         }
       }
     }
